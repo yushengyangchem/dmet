@@ -19,9 +19,9 @@ maintainers = [
 classifiers = []
 
 [project.urls]
-Homepage = ""
-Issues = ""
-Documentation = ""
+Homepage = "https://github.com/yushengyangchem/dmet"
+Issues = "https://github.com/yushengyangchem/dmet/issues"
+Documentation = "https://github.com/yushengyangchem/dmet"
 
 [tool.hatch.version]
 path = "src/dmet/__init__.py"
