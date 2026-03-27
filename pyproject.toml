@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dmet"
+dynamic = ["version"]
+description = "A minimal DMET prototype built on top of PySCF."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["numpy", "pyscf"]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = []
+authors = [{ name = "yushengyangchem", email = "yushengyangchem@gmail.com" }]
+maintainers = [
+  { name = "yushengyangchem", email = "yushengyangchem@gmail.com" },
+]
+classifiers = []
+
+[project.urls]
+Homepage = ""
+Issues = ""
+Documentation = ""
+
+[tool.hatch.version]
+path = "src/dmet/__init__.py"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
