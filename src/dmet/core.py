@@ -67,6 +67,10 @@ class DMETFragmentResult:
         embedding_energy: Total energy of the embedding problem (including
             core contribution).
         fragment_energy: Energy contribution attributed to the impurity orbitals.
+        mean_field_fragment_energy: Mean-field contribution attributed to the
+            same impurity partition inside the embedding space. This provides
+            the baseline used to accumulate a DMET correlation correction over
+            the RHF total energy.
         bath_occupations: Occupation numbers of bath orbitals, indicating
             their entanglement with the impurity.
     """
@@ -79,6 +83,7 @@ class DMETFragmentResult:
     fragment_electron_count: float
     embedding_energy: float
     fragment_energy: float
+    mean_field_fragment_energy: float
     bath_occupations: tuple[float, ...]
 
 
@@ -91,13 +96,16 @@ class DMETResult:
 
     Attributes:
         mean_field_energy: Total energy from the reference RHF calculation.
-        total_energy: Estimated total energy from DMET (averaged over fragments).
+        total_energy: Estimated total energy from DMET obtained by adding the
+            sum of fragment correlation corrections to the RHF reference.
         fragments: Tuple of results for each fragment that was solved.
 
     Note:
-        The total_energy is currently computed as a simple average of fragment
-        embedding energies. More sophisticated energy partitioning schemes
-        are not yet implemented.
+        The total energy is accumulated as
+        ``E_DMET = E_RHF + sum_A (E_A^corr - E_A^RHF)`` using the impurity
+        energy partition for each fragment. This is more robust than averaging
+        whole embedding energies, while remaining compatible with the current
+        one-shot implementation.
     """
 
     mean_field_energy: float
@@ -225,12 +233,12 @@ class RHFDMET:
        - Builds an embedding Hamiltonian in the impurity+bath space
        - Solves the embedding problem with FCI
        - Computes fragment energies
-    4. Estimates total energy by averaging fragment embedding energies
+    4. Estimates total energy from fragment correlation corrections
 
-    The total energy returned by :meth:`kernel` is a simple estimator formed by
-    averaging the embedded fragment energies. This keeps the first version
-    numerically stable before adding the usual DMET correlation-potential
-    self-consistency and a more careful fragment energy partition.
+    The total energy returned by :meth:`kernel` is formed by adding the sum of
+    fragment correlation corrections to the RHF reference energy. This avoids
+    treating each embedding calculation as a full-system energy while keeping
+    the implementation compatible with one-shot DMET.
 
     Attributes:
         mol: PySCF Mole object for the molecular system.
@@ -313,7 +321,8 @@ class RHFDMET:
         Returns:
             DMETResult object containing:
             - mean_field_energy: RHF reference energy
-            - total_energy: DMET energy estimate (average over fragments)
+            - total_energy: DMET energy estimate from fragment correlation
+              corrections on top of RHF
             - fragments: Detailed results for each fragment
 
         Raises:
@@ -325,9 +334,18 @@ class RHFDMET:
             >>> print(f"DMET energy: {result.total_energy:.6f}")
 
         Note:
-            The current implementation uses a simple average of fragment
-            embedding energies. For more accurate energies, consider
-            implementing a proper energy partitioning scheme.
+            The total energy is built as the RHF reference energy plus the
+            sum of fragment correlation corrections,
+            ``fragment_energy - mean_field_fragment_energy``. This is a more
+            meaningful one-shot DMET estimator than averaging full embedding
+            energies across fragments.
+
+            This is still not a fully self-consistent DMET energy expression.
+            Its reliability depends on using a consistent impurity energy
+            partition together with a sensible fragment covering of the system
+            without unintended overlaps. For the present one-shot
+            implementation, however, it is a much more reasonable default than
+            averaging fragment embedding energies.
         """
         if not fragments:
             raise ValueError("At least one fragment is required.")
@@ -336,7 +354,11 @@ class RHFDMET:
             self._solve_fragment(fragment) for fragment in fragments
         )
         total_energy = float(
-            np.mean([result.embedding_energy for result in fragment_results])
+            self.mf.e_tot
+            + sum(
+                result.fragment_energy - result.mean_field_fragment_energy
+                for result in fragment_results
+            )
         )
         return DMETResult(
             mean_field_energy=float(self.mf.e_tot),
@@ -470,6 +492,23 @@ class RHFDMET:
             )
         )
 
+        reference_rdm1 = 2.0 * (
+            embedding_basis_orth.T @ self.reference_density_orth @ embedding_basis_orth
+        )
+        reference_rdm1 = 0.5 * (reference_rdm1 + reference_rdm1.T)
+        reference_density_ao = (
+            embedding_basis_ao @ reference_rdm1 @ embedding_basis_ao.T
+        )
+        reference_veff = scf.hf.get_veff(self.mol, reference_density_ao)
+        reference_veff_emb = embedding_basis_ao.T @ reference_veff @ embedding_basis_ao
+        mean_field_fragment_energy = float(
+            np.einsum(
+                "ij,ji->",
+                h1_emb[impurity_slice, :] + 0.5 * reference_veff_emb[impurity_slice, :],
+                reference_rdm1[:, impurity_slice],
+            )
+        )
+
         return DMETFragmentResult(
             fragment=fragment,
             embedding_dimension=n_active,
@@ -481,5 +520,6 @@ class RHFDMET:
             ),
             embedding_energy=float(embedding_energy),
             fragment_energy=float(fragment_energy),
+            mean_field_fragment_energy=float(mean_field_fragment_energy),
             bath_occupations=tuple(float(value) for value in bath_occupations),
         )

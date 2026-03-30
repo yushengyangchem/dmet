@@ -5,9 +5,11 @@ This module contains tests for the DMET package, serving both as
 verification of the implementation and as usage examples.
 """
 
+from types import SimpleNamespace
+
 from pyscf import gto
 
-from dmet import RHFDMET, make_atom_fragments
+from dmet import RHFDMET, DMETFragmentResult, Fragment, make_atom_fragments
 
 
 def test_h4_chain_runs_and_builds_fragment_embeddings() -> None:
@@ -47,3 +49,50 @@ def test_h4_chain_runs_and_builds_fragment_embeddings() -> None:
         assert fragment.embedding_dimension >= len(fragment.fragment.ao_indices)
         assert fragment.bath_dimension <= len(fragment.fragment.ao_indices)
         assert fragment.embedding_energy < 0.0
+        assert fragment.mean_field_fragment_energy < 0.0
+
+
+def test_kernel_accumulates_fragment_correlation_corrections(monkeypatch) -> None:
+    """Kernel should add fragment correlation corrections on top of RHF."""
+    dmet = RHFDMET.__new__(RHFDMET)
+    dmet.mf = SimpleNamespace(e_tot=-10.0)
+
+    fragments = [
+        Fragment("frag_a", (0,)),
+        Fragment("frag_b", (1,)),
+    ]
+    fragment_results = {
+        "frag_a": DMETFragmentResult(
+            fragment=fragments[0],
+            embedding_dimension=2,
+            bath_dimension=1,
+            core_dimension=0,
+            nelec_active=2,
+            fragment_electron_count=1.0,
+            embedding_energy=-100.0,
+            fragment_energy=-3.5,
+            mean_field_fragment_energy=-3.0,
+            bath_occupations=(0.5,),
+        ),
+        "frag_b": DMETFragmentResult(
+            fragment=fragments[1],
+            embedding_dimension=2,
+            bath_dimension=1,
+            core_dimension=0,
+            nelec_active=2,
+            fragment_electron_count=1.0,
+            embedding_energy=-200.0,
+            fragment_energy=-4.0,
+            mean_field_fragment_energy=-4.25,
+            bath_occupations=(0.5,),
+        ),
+    }
+
+    def fake_solve_fragment(fragment: Fragment) -> DMETFragmentResult:
+        return fragment_results[fragment.name]
+
+    monkeypatch.setattr(dmet, "_solve_fragment", fake_solve_fragment)
+
+    result = dmet.kernel(fragments)
+
+    assert result.total_energy == -10.25
