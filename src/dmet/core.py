@@ -262,7 +262,7 @@ class RHFDMET:
         >>> print(f"DMET energy: {result.total_energy:.6f}")
 
     References:
-        - Knizia, G., & Chan, G. K. L. (2012). Physical Review Letters, 109(26).
+        - Knizia, G., & Chan, G. K.-L. Phys. Rev. Lett. 2012, 109, 186404.
     """
 
     def __init__(
